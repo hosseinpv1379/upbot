@@ -23,7 +23,12 @@ uploader for large files.
 - Caption templating ({filename}, {size}, {duration}, {resolution}, {ext},
   {date}, {index}), per-channel defaults + footer.
 - Multi-channel management, URL/content de-duplication, automatic cleanup.
-- Admin commands: `/queue`, `/cancel`, `/retry`, `/history`, `/stats`, `/channels`,
+- Full inline-button ("glass button") menu — `/menu` — for everything below, so
+  admins never have to type a command: queue (with cancel/pause/retry buttons),
+  channel management (add via forwarded post or id/username, set default, edit
+  caption/footer, delete), history, stats, settings toggles, proxy test.
+- The same actions are also available as admin commands, if you prefer typing:
+  `/queue`, `/cancel`, `/retry`, `/history`, `/stats`, `/channels`,
   `/addchannel`, `/delchannel`, `/setdefault`, `/setcaption`, `/setfooter`,
   `/settings`, `/proxy`.
 
@@ -41,7 +46,11 @@ uploader/
   media.py           ffprobe/ffmpeg helpers
   progress.py        throttled progress tracking + rendering
   utils.py           filename/caption/hash helpers
-  handlers/          command, message and callback handlers
+  handlers/
+    menu.py          inline-button menu rendering (the /menu UI)
+    commands.py      admin slash-commands
+    links.py         download links + pending text replies for the menu
+    callbacks.py     inline-button callback handling
 login.py             interactive StringSession generator
 tests/               unit tests (filename parsing, captions, progress)
 ```
@@ -172,8 +181,15 @@ python -m uploader.main
 برای چند لینک با یک کپشن مشترک، لینک‌ها را هرکدام در یک خط و بعد از یک خط `---`
 کپشن مشترک را بنویسید.
 
-### دستورات مهم
+### منوی دکمه‌ای (به‌جای تایپ دستور)
 
-`/queue`، `/cancel <id>`، `/retry <id>`، `/history`، `/stats`، `/channels`،
+دستور `/menu` یک منوی کامل با دکمه‌های شیشه‌ای باز می‌کند: صف کارها (با دکمه لغو/توقف/تلاش دوباره
+روی هر کار)، مدیریت کانال‌ها (افزودن با فوروارد کردن یک پیام از کانال، یا با آیدی/یوزرنیم؛ تعیین
+پیش‌فرض؛ تغییر کپشن و فوتر؛ حذف)، تاریخچه، آمار، تنظیمات و تست پراکسی — همه بدون نیاز به تایپ هیچ
+دستوری.
+
+### دستورات مهم (در صورت تمایل به تایپ)
+
+`/menu`، `/queue`، `/cancel <id>`، `/retry <id>`، `/history`، `/stats`، `/channels`،
 `/addchannel`، `/delchannel`، `/setdefault`، `/setcaption`، `/setfooter`،
 `/settings`، `/proxy`.

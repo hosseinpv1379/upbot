@@ -221,7 +221,7 @@ async def send_media(
             caption=caption,
             parse_mode=parse_mode,
             attributes=attributes,
-            force_document=True,
+            force_document=force_document,
             mime_type=mime_type,
             thumb=str(thumb_path) if thumb_path else None,
             supports_streaming=supports_streaming,

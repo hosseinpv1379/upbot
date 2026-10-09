@@ -17,6 +17,10 @@ HELP_TEXT = (
     "🤖 ربات آپلودر تلگرام\n\n"
     "یک یا چند لینک دانلود مستقیم بفرستید (هر لینک در یک خط)، به صورت اختیاری"
     " بعد از یک خط `---` کپشن دلخواه را اضافه کنید.\n\n"
+    "برای افزودن کانال با آیدی عددی خام (مثل -100...) که بات قبلاً نمی‌شناسد،"
+    " به‌جای /addchannel یک پیام از آن کانال را برای بات فوروارد کنید.\n\n"
+    "برای کار با دکمه به‌جای تایپ دستور، از /menu استفاده کنید — همه‌ی موارد زیر"
+    " (صف، کانال‌ها، تاریخچه، آمار، تنظیمات، پراکسی) از همان منو هم در دسترس‌اند.\n\n"
     "دستورات:\n"
     "/queue — نمایش صف کارها\n"
     "/cancel <id> — لغو یک کار\n"
@@ -48,7 +52,18 @@ def register(ctx: AppContext) -> None:
     @bot.on(events.NewMessage(pattern=r"^/start$"))
     @admin_only
     async def start_cmd(event: events.NewMessage.Event) -> None:
-        await event.reply(HELP_TEXT)
+        from uploader.handlers import menu as menu_mod
+
+        text, buttons = await menu_mod.render_main(ctx)
+        await event.reply(text, buttons=buttons)
+
+    @bot.on(events.NewMessage(pattern=r"^/menu$"))
+    @admin_only
+    async def menu_cmd(event: events.NewMessage.Event) -> None:
+        from uploader.handlers import menu as menu_mod
+
+        text, buttons = await menu_mod.render_main(ctx)
+        await event.reply(text, buttons=buttons)
 
     @bot.on(events.NewMessage(pattern=r"^/help$"))
     @admin_only
@@ -144,7 +159,11 @@ def register(ctx: AppContext) -> None:
         try:
             entity = await bot.get_entity(target)
         except Exception as exc:  # noqa: BLE001
-            await event.reply(f"کانال پیدا نشد: {exc}")
+            await event.reply(
+                f"کانال پیدا نشد: {exc}\n\n"
+                "اگر آیدی عددی خام دادید و بات قبلاً این کانال را نمی‌شناسد، به‌جای این دستور"
+                " یک پیام از آن کانال را برای بات فوروارد کنید."
+            )
             return
         title = getattr(entity, "title", None) or getattr(entity, "username", None) or str(entity.id)
         username = getattr(entity, "username", None)
@@ -189,7 +208,9 @@ def register(ctx: AppContext) -> None:
     @bot.on(events.NewMessage(pattern=r"^/settings$"))
     @admin_only
     async def settings_cmd(event: events.NewMessage.Event) -> None:
-        text, buttons = await render_settings_menu(ctx)
+        from uploader.handlers import menu as menu_mod
+
+        text, buttons = await menu_mod.render_settings(ctx)
         await event.reply(text, buttons=buttons)
 
     @bot.on(events.NewMessage(pattern=r"^/proxy$"))

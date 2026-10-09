@@ -28,6 +28,7 @@ class AppContext:
     upload_limit_bytes: int = DEFAULT_UPLOAD_LIMIT
     start_time: float = 0.0
     pending_batches: dict = field(default_factory=dict)
+    pending_inputs: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.start_time:

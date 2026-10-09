@@ -31,6 +31,18 @@ def register(ctx: AppContext) -> None:
         sender_id = event.sender_id
         if not ctx.is_admin(sender_id):
             return
+
+        forward = event.message.forward
+        if forward is not None and forward.is_channel:
+            await _handle_forwarded_channel(ctx, event, forward)
+            ctx.pending_inputs.pop(sender_id, None)
+            return
+
+        pending = ctx.pending_inputs.pop(sender_id, None)
+        if pending is not None:
+            await _handle_pending_input(ctx, event, pending)
+            return
+
         text = event.raw_text or ""
         if text.startswith("/"):
             return  # commands are handled separately
@@ -69,3 +81,65 @@ def register(ctx: AppContext) -> None:
 async def _queue_batch(ctx: AppContext, admin_chat_id: int, urls: list[str], caption: str, channel_ids: list[int]) -> None:
     for url in urls:
         await ctx.job_manager.enqueue(admin_chat_id, url, caption, channel_ids)
+
+
+async def _handle_forwarded_channel(ctx: AppContext, event: events.NewMessage.Event, forward) -> None:
+    """Registers the source channel of a forwarded post — the reliable way to resolve a
+    channel Telethon has never interacted with, since a bare numeric chat id can't be
+    resolved without an access hash, but a forwarded post carries one."""
+    from telethon.utils import get_peer_id
+
+    try:
+        chat = await forward.get_chat()
+    except Exception:  # noqa: BLE001
+        chat = None
+
+    if chat is None:
+        await event.reply(
+            "چنل منبع این پیام فوروارد‌شده قابل شناسایی نبود.\n"
+            "اگر بات/اکانت در آن کانال ادمین نیست، ابتدا ادمینش کنید و دوباره پیام را فوروارد کنید."
+        )
+        return
+
+    chat_id = get_peer_id(chat)
+    title = getattr(chat, "title", None) or getattr(chat, "username", None) or str(chat_id)
+    username = getattr(chat, "username", None)
+    await ctx.db.add_channel(chat_id, title, username)
+    await event.reply(f"✅ کانال «{title}» ({chat_id}) از روی پیام فوروارد‌شده اضافه شد.")
+
+
+async def _handle_pending_input(ctx: AppContext, event: events.NewMessage.Event, pending: dict) -> None:
+    """Consumes a plain-text reply the admin sent after tapping an inline-menu action
+    that needs free text (add channel by id/username, new caption, new footer)."""
+    from uploader.handlers import menu as menu_mod
+
+    action = pending["action"]
+    value = (event.raw_text or "").strip()
+    if not value:
+        await event.reply("متن خالی بود، دوباره تلاش کنید.")
+        return
+
+    if action == "addchannel":
+        try:
+            entity = await ctx.bot.get_entity(value)
+        except Exception as exc:  # noqa: BLE001
+            await event.reply(
+                f"کانال پیدا نشد: {exc}\nمی‌توانید به‌جای آن، یک پیام از آن کانال را فوروارد کنید."
+            )
+            return
+        from telethon.utils import get_peer_id
+
+        title = getattr(entity, "title", None) or getattr(entity, "username", None) or str(entity.id)
+        username = getattr(entity, "username", None)
+        chat_id = get_peer_id(entity)
+        await ctx.db.add_channel(chat_id, title, username)
+        text, buttons = await menu_mod.render_channels(ctx)
+        await event.reply(f"✅ کانال «{title}» اضافه شد.", buttons=buttons)
+    elif action == "setcaption":
+        await ctx.db.set_channel_caption(pending["chat_id"], value)
+        text, buttons = await menu_mod.render_channel_detail(ctx, pending["chat_id"])
+        await event.reply(text, buttons=buttons)
+    elif action == "setfooter":
+        await ctx.db.set_channel_footer(pending["chat_id"], value)
+        text, buttons = await menu_mod.render_channel_detail(ctx, pending["chat_id"])
+        await event.reply(text, buttons=buttons)
