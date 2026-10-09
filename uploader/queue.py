@@ -69,6 +69,7 @@ class JobManager:
         self._dispatcher: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
         self._status_messages: dict[int, object] = {}
+        self._batch_locks: dict[str, asyncio.Lock] = {}
 
     async def start(self) -> None:
         restarted = await self.ctx.db.reset_stuck_jobs()
@@ -78,6 +79,14 @@ class JobManager:
             await self._queue.put(job.id)
         self._dispatcher = asyncio.create_task(self._dispatch_loop())
         self._cleanup_task = asyncio.create_task(self._periodic_cleanup_loop())
+
+        # A batch whose members all finished downloading right before a crash would
+        # otherwise never resume, since no running job is left to trigger it again.
+        stranded_batches = {
+            j.batch_id for j in await self.ctx.db.list_jobs(statuses=("downloaded",), limit=1000) if j.batch_id
+        }
+        for batch_id in stranded_batches:
+            asyncio.create_task(self._maybe_finish_batch(batch_id))
 
     async def shutdown(self) -> None:
         if self._dispatcher:
@@ -124,9 +133,14 @@ class JobManager:
         caption: str,
         channel_ids: list[int],
         options: Optional[dict] = None,
+        batch_id: Optional[str] = None,
+        batch_index: Optional[int] = None,
     ) -> int:
         url_hash = sha256_url(url)
-        job_id = await self.ctx.db.create_job(admin_chat_id, url, caption, channel_ids, url_hash, options or {})
+        job_id = await self.ctx.db.create_job(
+            admin_chat_id, url, caption, channel_ids, url_hash, options or {},
+            batch_id=batch_id, batch_index=batch_index,
+        )
         await self._queue.put(job_id)
         return job_id
 
@@ -180,6 +194,7 @@ class JobManager:
         if job is None or job.status in ("done", "cancelled"):
             return
 
+        batch_id = job.batch_id
         cancel_event = asyncio.Event()
         pause_event = asyncio.Event()
         pause_event.set()
@@ -193,8 +208,17 @@ class JobManager:
 
             file_path = await self._process_download(job, cancel_event, pause_event)
             job = await self.ctx.db.get_job(job_id)  # refresh after download
-            await self._process_upload(job, file_path, cancel_event)
 
+            if batch_id:
+                # Uploaded together with the rest of the batch once every sibling is
+                # ready — see _maybe_finish_batch, triggered from the finally below.
+                await self.ctx.db.update_job(job_id, status="downloaded")
+                await self._edit_status(
+                    job, f"✅ دانلود شد: {job.filename or job.url}\nدر انتظار بقیه‌ی فایل‌های گروه برای آپلود دسته‌جمعی..."
+                )
+                return
+
+            await self._process_upload(job, file_path, cancel_event)
             await self.ctx.db.update_job(job_id, status="done")
             await self._edit_status(job, f"✅ {job.filename or job.url}\nبا موفقیت در همه‌ی کانال‌ها ارسال شد.")
         except DownloadCancelled:
@@ -212,7 +236,10 @@ class JobManager:
             self._cancel_events.pop(job_id, None)
             self._pause_events.pop(job_id, None)
             self._status_messages.pop(job_id, None)
-            await self._cleanup_files(job)
+            if batch_id:
+                await self._maybe_finish_batch(batch_id)
+            else:
+                await self._cleanup_files(job)
 
     async def _fail(self, job: Job, message: str) -> None:
         await self.ctx.db.update_job(job.id, status="failed", error=message)
@@ -221,6 +248,75 @@ class JobManager:
     async def _cleanup_files(self, job: Job) -> None:
         job = await self.ctx.db.get_job(job.id)
         if job and job.file_path:
+            path = Path(job.file_path)
+            path.unlink(missing_ok=True)
+            state = path.with_suffix(path.suffix + ".state.json")
+            state.unlink(missing_ok=True)
+
+    async def _maybe_finish_batch(self, batch_id: str) -> None:
+        """Called whenever any job in a batch finishes its download phase (success,
+        failure, cancellation, or duplicate-skip). Once every sibling has reached a
+        terminal download-phase state, uploads whatever downloaded successfully as a
+        single Telegram album (media group) with one shared caption."""
+        lock = self._batch_locks.setdefault(batch_id, asyncio.Lock())
+        async with lock:
+            siblings = await self.ctx.db.list_jobs_by_batch(batch_id)
+            if any(s.status in ("queued", "downloading", "paused") for s in siblings):
+                return  # other members of the batch are still downloading
+            self._batch_locks.pop(batch_id, None)
+            ready = [s for s in siblings if s.status == "downloaded"]
+            if not ready:
+                return  # every member failed/cancelled/was a duplicate — nothing to send
+            await self._upload_batch(batch_id, ready)
+
+    async def _upload_batch(self, batch_id: str, jobs: list[Job]) -> None:
+        admin_chat_id = jobs[0].admin_chat_id
+        channels = await self.ctx.db.list_channels()
+        channel_ids = jobs[0].channel_ids or (
+            [c.chat_id for c in channels if c.is_default] or [c.chat_id for c in channels[:1]]
+        )
+        file_paths = [Path(j.file_path) for j in jobs if j.file_path]
+
+        status_msg = await self.ctx.bot.send_message(
+            admin_chat_id, f"📦 در حال آپلود گروهی {len(jobs)} فایل در یک آلبوم..."
+        )
+
+        if not channel_ids:
+            await status_msg.edit("⛔️ هیچ کانالی تنظیم نشده است؛ آپلود گروهی لغو شد.")
+            for job in jobs:
+                await self.ctx.db.update_job(job.id, status="failed", error="no channel configured")
+            self._cleanup_batch_files(jobs)
+            return
+
+        try:
+            for chat_id in channel_ids:
+                channel = next((c for c in channels if c.chat_id == chat_id), None)
+                caption = await self._render_caption_for(jobs[0], file_paths[0], channel, 1, len(jobs))
+                messages = await uploader_mod.send_parts_as_album(
+                    self.ctx.upload_client, chat_id, file_paths, caption, "html"
+                )
+                for job, message in zip(jobs, messages):
+                    if message is not None:
+                        await self.ctx.db.record_upload(
+                            job.id, job.url, Path(job.file_path).name, job.file_size,
+                            chat_id, message.id, job.file_hash, job.url_hash,
+                        )
+
+            for job in jobs:
+                await self.ctx.db.update_job(job.id, status="done")
+            await status_msg.edit(f"✅ {len(jobs)} فایل با موفقیت در قالب یک آلبوم ارسال شد.")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Batch %s upload failed", batch_id)
+            for job in jobs:
+                await self.ctx.db.update_job(job.id, status="failed", error=str(exc))
+            await status_msg.edit(f"⛔️ خطا در آپلود گروهی: {exc}")
+        finally:
+            self._cleanup_batch_files(jobs)
+
+    def _cleanup_batch_files(self, jobs: list[Job]) -> None:
+        for job in jobs:
+            if not job.file_path:
+                continue
             path = Path(job.file_path)
             path.unlink(missing_ok=True)
             state = path.with_suffix(path.suffix + ".state.json")

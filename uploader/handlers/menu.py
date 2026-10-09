@@ -18,6 +18,7 @@ MAIN_MENU_TEXT = "🤖 منوی ربات آپلودر\n\nیک گزینه را ا
 STATUS_FA = {
     "queued": "⏳ در صف",
     "downloading": "⬇️ دانلود",
+    "downloaded": "📦 منتظر گروه",
     "uploading": "⬆️ آپلود",
     "paused": "⏸ متوقف",
     "done": "✅ تمام‌شده",
@@ -44,7 +45,9 @@ async def render_main(ctx: AppContext) -> tuple[str, list]:
 
 
 async def render_queue(ctx: AppContext) -> tuple[str, list]:
-    active_jobs = await ctx.db.list_jobs(statuses=("queued", "downloading", "uploading", "paused"), limit=15)
+    active_jobs = await ctx.db.list_jobs(
+        statuses=("queued", "downloading", "uploading", "paused", "downloaded"), limit=15
+    )
     failed_jobs = await ctx.db.list_jobs(statuses=("failed", "cancelled"), limit=5)
 
     if not active_jobs and not failed_jobs:
@@ -60,6 +63,8 @@ async def render_queue(ctx: AppContext) -> tuple[str, list]:
         for job in active_jobs:
             label = short(job.filename or job.url)
             lines.append(f"#{job.id} — {label} — {STATUS_FA.get(job.status, job.status)}")
+            if job.status == "downloaded":
+                continue  # waiting for batch-mates; nothing to cancel/pause anymore
             rows.append(
                 [
                     Button.inline(f"❌ #{job.id}", data=f"cancel:{job.id}".encode()),

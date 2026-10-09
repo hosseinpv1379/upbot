@@ -18,6 +18,9 @@ uploader for large files.
 - Video/audio/image-aware sending: ffprobe metadata, auto thumbnails, streaming flag.
 - Automatic splitting (7z volumes, or ffmpeg segments for video) + album upload for
   files over Telegram's size limit.
+- Multiple links sent together (one per line, no `---` needed) are downloaded in
+  parallel and then posted as a single Telegram album (media group) with one
+  shared caption, once every file in the batch has finished downloading.
 - Live progress message with a bar, speed, ETA, and Cancel / Pause-Resume buttons.
 - Persistent SQLite job queue that survives restarts, with configurable concurrency.
 - Caption templating ({filename}, {size}, {duration}, {resolution}, {ext},
@@ -104,7 +107,13 @@ https://example.com/file.mkv
 My custom caption line
 ```
 
-Multiple links with a shared caption:
+Multiple links, with or without a shared caption — once every file has finished
+downloading, they're posted together as a single Telegram album:
+
+```
+https://example.com/a.mkv
+https://example.com/b.mkv
+```
 
 ```
 https://example.com/a.mkv
@@ -178,8 +187,9 @@ python -m uploader.main
 ```
 
 سپس لینک دانلود را بفرستید (و در صورت تمایل، کپشن را در خط‌های بعدی اضافه کنید).
-برای چند لینک با یک کپشن مشترک، لینک‌ها را هرکدام در یک خط و بعد از یک خط `---`
-کپشن مشترک را بنویسید.
+اگر چند لینک را با هم بفرستید (هرکدام در یک خط، با یا بدون کپشن مشترک بعد از یک خط `---`)،
+ربات همه را هم‌زمان دانلود می‌کند و بعد از اتمام دانلود همه، آن‌ها را در قالب یک آلبوم
+(media group) با یک کپشن مشترک در کانال ارسال می‌کند.
 
 ### منوی دکمه‌ای (به‌جای تایپ دستور)
 

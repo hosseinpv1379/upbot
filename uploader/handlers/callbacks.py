@@ -91,14 +91,21 @@ async def _handle_channel_pick(ctx: AppContext, event: events.CallbackQuery.Even
 
 
 async def _handle_channel_confirm(ctx: AppContext, event: events.CallbackQuery.Event, token: str) -> None:
+    import secrets
+
     batch = ctx.pending_batches.pop(token, None)
     if batch is None:
         await event.answer("این انتخاب منقضی شده است.")
         return
     channel_ids = list(batch["selected"])
-    for url in batch["urls"]:
-        await ctx.job_manager.enqueue(batch["admin_chat_id"], url, batch["caption"], channel_ids)
-    await event.edit(f"✅ {len(batch['urls'])} لینک به صف اضافه شد.", buttons=None)
+    urls = batch["urls"]
+    batch_id = secrets.token_hex(8) if len(urls) > 1 else None
+    for index, url in enumerate(urls):
+        await ctx.job_manager.enqueue(
+            batch["admin_chat_id"], url, batch["caption"], channel_ids, batch_id=batch_id, batch_index=index
+        )
+    note = " (پس از دانلود کامل همه، در یک آلبوم ارسال می‌شوند)" if len(urls) > 1 else ""
+    await event.edit(f"✅ {len(urls)} لینک به صف اضافه شد.{note}", buttons=None)
     await event.answer()
 
 

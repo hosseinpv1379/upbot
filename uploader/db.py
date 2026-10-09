@@ -36,12 +36,15 @@ CREATE TABLE IF NOT EXISTS jobs (
     url_hash TEXT,
     file_hash TEXT,
     options TEXT DEFAULT '{}',
+    batch_id TEXT,
+    batch_index INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_url_hash ON jobs(url_hash);
+CREATE INDEX IF NOT EXISTS idx_jobs_batch_id ON jobs(batch_id);
 
 CREATE TABLE IF NOT EXISTS uploads_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +101,8 @@ class Job:
     url_hash: Optional[str]
     file_hash: Optional[str]
     options: dict
+    batch_id: Optional[str]
+    batch_index: Optional[int]
     created_at: str
     updated_at: str
 
@@ -118,6 +123,8 @@ class Job:
             url_hash=row["url_hash"],
             file_hash=row["file_hash"],
             options=json.loads(row["options"] or "{}"),
+            batch_id=row["batch_id"],
+            batch_index=row["batch_index"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -156,6 +163,14 @@ class Database:
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
+        for ddl in (
+            "ALTER TABLE jobs ADD COLUMN batch_id TEXT",
+            "ALTER TABLE jobs ADD COLUMN batch_index INTEGER",
+        ):
+            try:
+                await self._conn.execute(ddl)
+            except aiosqlite.OperationalError:
+                pass  # column already exists (fresh schema already includes it)
         for key, value in DEFAULT_SETTINGS.items():
             await self._conn.execute(
                 "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
@@ -181,12 +196,14 @@ class Database:
         channel_ids: list[int],
         url_hash: str,
         options: Optional[dict] = None,
+        batch_id: Optional[str] = None,
+        batch_index: Optional[int] = None,
     ) -> int:
         now = _now()
         cur = await self.conn.execute(
             """INSERT INTO jobs (admin_chat_id, url, caption, channel_ids, status,
-                                 url_hash, options, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)""",
+                                 url_hash, options, batch_id, batch_index, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)""",
             (
                 admin_chat_id,
                 url,
@@ -194,12 +211,23 @@ class Database:
                 json.dumps(channel_ids),
                 url_hash,
                 json.dumps(options or {}),
+                batch_id,
+                batch_index,
                 now,
                 now,
             ),
         )
         await self.conn.commit()
         return cur.lastrowid
+
+    async def list_jobs_by_batch(self, batch_id: str) -> list[Job]:
+        """Ordered by the position each URL had in the admin's original message,
+        not by download-completion order, so albums preserve link order."""
+        cur = await self.conn.execute(
+            "SELECT * FROM jobs WHERE batch_id = ? ORDER BY batch_index ASC, id ASC", (batch_id,)
+        )
+        rows = await cur.fetchall()
+        return [Job.from_row(r) for r in rows]
 
     async def get_job(self, job_id: int) -> Optional[Job]:
         cur = await self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))

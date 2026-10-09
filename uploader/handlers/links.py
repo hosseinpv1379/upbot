@@ -60,7 +60,8 @@ def register(ctx: AppContext) -> None:
         if len(channels) == 1:
             channel_ids = [channels[0].chat_id]
             await _queue_batch(ctx, event.chat_id, urls, caption, channel_ids)
-            await event.reply(f"✅ {len(urls)} لینک به صف اضافه شد.")
+            note = " (پس از دانلود کامل همه، در یک آلبوم ارسال می‌شوند)" if len(urls) > 1 else ""
+            await event.reply(f"✅ {len(urls)} لینک به صف اضافه شد.{note}")
             return
 
         default = next((c for c in channels if c.is_default), channels[0])
@@ -79,8 +80,9 @@ def register(ctx: AppContext) -> None:
 
 
 async def _queue_batch(ctx: AppContext, admin_chat_id: int, urls: list[str], caption: str, channel_ids: list[int]) -> None:
-    for url in urls:
-        await ctx.job_manager.enqueue(admin_chat_id, url, caption, channel_ids)
+    batch_id = secrets.token_hex(8) if len(urls) > 1 else None
+    for index, url in enumerate(urls):
+        await ctx.job_manager.enqueue(admin_chat_id, url, caption, channel_ids, batch_id=batch_id, batch_index=index)
 
 
 async def _handle_forwarded_channel(ctx: AppContext, event: events.NewMessage.Event, forward) -> None:
