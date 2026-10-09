@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 
 from telethon import events
 
@@ -57,6 +58,8 @@ def register(ctx: AppContext) -> None:
             await event.answer()
         elif action == "chan":
             await _handle_channel_action(ctx, event, rest)
+        elif action == "scrape":
+            await _handle_scrape_pick(ctx, event, rest)
         else:
             await event.answer()
 
@@ -91,8 +94,6 @@ async def _handle_channel_pick(ctx: AppContext, event: events.CallbackQuery.Even
 
 
 async def _handle_channel_confirm(ctx: AppContext, event: events.CallbackQuery.Event, token: str) -> None:
-    import secrets
-
     batch = ctx.pending_batches.pop(token, None)
     if batch is None:
         await event.answer("این انتخاب منقضی شده است.")
@@ -162,3 +163,44 @@ async def _handle_channel_action(ctx: AppContext, event: events.CallbackQuery.Ev
         await event.respond("متن فوتر جدید را بفرستید.")
     else:
         await event.answer()
+
+
+async def _handle_scrape_pick(ctx: AppContext, event: events.CallbackQuery.Event, rest: str) -> None:
+    token, _, index_str = rest.partition(":")
+    data = ctx.pending_scrapes.get(token)
+    if data is None:
+        await event.answer("این منو منقضی شده است.")
+        return
+    try:
+        item = data["items"][int(index_str)]
+    except (IndexError, ValueError):
+        await event.answer("این مورد دیگر در دسترس نیست.")
+        return
+
+    channels = await ctx.db.list_channels()
+    if not channels:
+        await event.answer("هیچ کانالی تنظیم نشده است.")
+        return
+
+    if len(channels) == 1:
+        channel_ids = [channels[0].chat_id]
+        await ctx.job_manager.enqueue(data["admin_chat_id"], item.url, data["caption"], channel_ids)
+        await event.answer(f"✅ «{item.label}» به صف اضافه شد.")
+        return
+
+    from uploader.handlers.links import _channel_keyboard
+
+    default = next((c for c in channels if c.is_default), channels[0])
+    pick_token = secrets.token_hex(8)
+    ctx.pending_batches[pick_token] = {
+        "urls": [item.url],
+        "caption": data["caption"],
+        "admin_chat_id": data["admin_chat_id"],
+        "channels": channels,
+        "selected": {default.chat_id},
+    }
+    await event.respond(
+        f"کانال مقصد برای «{item.label}» را انتخاب کنید:",
+        buttons=_channel_keyboard(ctx, pick_token),
+    )
+    await event.answer()

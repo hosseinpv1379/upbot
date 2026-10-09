@@ -20,7 +20,14 @@ uploader for large files.
   files over Telegram's size limit.
 - Multiple links sent together (one per line, no `---` needed) are downloaded in
   parallel and then posted as a single Telegram album (media group) with one
-  shared caption, once every file in the batch has finished downloading.
+  shared caption, in the original link order, once every file in the batch has
+  finished downloading.
+- Page scraping: send a single link that isn't itself a media file (e.g. a song's
+  page), and the bot fetches it, finds every audio/video link on the page
+  (`<a href>`, `<audio>`/`<video>`/`<source>`, `og:audio`/`og:video`), and shows
+  them as inline buttons — tap one to download + upload just that file. Only
+  catches links whose URL has a recognizable media extension; pages that stream
+  through extension-less endpoints won't be picked up.
 - Live progress message with a bar, speed, ETA, and Cancel / Pause-Resume buttons.
 - Persistent SQLite job queue that survives restarts, with configurable concurrency.
 - Caption templating ({filename}, {size}, {duration}, {resolution}, {ext},
@@ -47,6 +54,7 @@ uploader/
   downloader.py      resumable/segmented downloader
   uploader.py        fast parallel upload + media attributes + splitting
   media.py           ffprobe/ffmpeg helpers
+  scraper.py         HTML page scraping for audio/video links
   progress.py        throttled progress tracking + rendering
   utils.py           filename/caption/hash helpers
   handlers/
@@ -190,6 +198,13 @@ python -m uploader.main
 اگر چند لینک را با هم بفرستید (هرکدام در یک خط، با یا بدون کپشن مشترک بعد از یک خط `---`)،
 ربات همه را هم‌زمان دانلود می‌کند و بعد از اتمام دانلود همه، آن‌ها را در قالب یک آلبوم
 (media group) با یک کپشن مشترک در کانال ارسال می‌کند.
+
+### اسکرپ کردن صفحه (مثلاً صفحه‌ی یک آهنگ)
+
+اگر لینکی بفرستید که خودش فایل مستقیم نیست بلکه یک صفحه‌ی وب است (مثل صفحه‌ی یک آهنگ یا آلبوم)،
+ربات آن صفحه را بررسی می‌کند و همه‌ی لینک‌های صوتی/تصویری موجود در آن را به‌صورت دکمه‌ی شیشه‌ای
+نشان می‌دهد. با زدن هرکدام، فقط همان فایل دانلود و آپلود می‌شود. این قابلیت فقط لینک‌هایی را پیدا
+می‌کند که در آدرسشان پسوند فایل (مثل `.mp3`، `.mp4`) مشخص باشد.
 
 ### منوی دکمه‌ای (به‌جای تایپ دستور)
 

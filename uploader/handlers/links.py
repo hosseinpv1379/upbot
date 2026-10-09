@@ -57,6 +57,11 @@ def register(ctx: AppContext) -> None:
             await event.reply("هیچ کانالی تنظیم نشده است. ابتدا با /addchannel یک کانال اضافه کنید.")
             return
 
+        if len(urls) == 1:
+            scraped = await _try_scrape(ctx, event, urls[0], caption)
+            if scraped:
+                return
+
         if len(channels) == 1:
             channel_ids = [channels[0].chat_id]
             await _queue_batch(ctx, event.chat_id, urls, caption, channel_ids)
@@ -77,6 +82,44 @@ def register(ctx: AppContext) -> None:
             f"کانال مقصد برای {len(urls)} لینک را انتخاب کنید:",
             buttons=_channel_keyboard(ctx, token),
         )
+
+
+def _scrape_keyboard(ctx: AppContext, token: str) -> list:
+    rows = []
+    for index, item in enumerate(ctx.pending_scrapes[token]["items"]):
+        icon = "🎵" if item.kind == "audio" else "🎬"
+        label = item.label if len(item.label) <= 40 else item.label[:37] + "..."
+        rows.append([Button.inline(f"{icon} {label}", data=f"scrape:{token}:{index}".encode())])
+    return rows
+
+
+async def _try_scrape(ctx: AppContext, event: events.NewMessage.Event, url: str, caption: str) -> bool:
+    """If `url` is a web page (not a direct media file), scrapes it for audio/video
+    links and shows them as buttons. Returns True if it handled the message (either
+    by showing the menu or reporting nothing was found) — the caller should then stop
+    and not also queue `url` itself as a direct download."""
+    from uploader import scraper
+
+    html, final_url = await scraper.fetch_if_html(url, ctx.settings.dl_proxy_config, ctx.settings.user_agent)
+    if html is None:
+        return False  # it's a direct file, not a page — let the normal flow handle it
+
+    candidates = scraper.parse_media_candidates(html, final_url)
+    if not candidates:
+        await event.reply("این یک صفحه‌ی وب است ولی هیچ فایل صوتی/تصویری در آن پیدا نشد.")
+        return True
+
+    token = secrets.token_hex(8)
+    ctx.pending_scrapes[token] = {
+        "admin_chat_id": event.chat_id,
+        "caption": caption,
+        "items": candidates,
+    }
+    await event.reply(
+        f"🔎 {len(candidates)} فایل در این صفحه پیدا شد. برای دانلود و آپلود هرکدام، روی آن بزنید:",
+        buttons=_scrape_keyboard(ctx, token),
+    )
+    return True
 
 
 async def _queue_batch(ctx: AppContext, admin_chat_id: int, urls: list[str], caption: str, channel_ids: list[int]) -> None:

@@ -29,6 +29,7 @@ class AppContext:
     start_time: float = 0.0
     pending_batches: dict = field(default_factory=dict)
     pending_inputs: dict = field(default_factory=dict)
+    pending_scrapes: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.start_time:
