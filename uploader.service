@@ -1,0 +1,26 @@
+[Unit]
+Description=Telegram Uploader Bot (Telethon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=uploader
+Group=uploader
+WorkingDirectory=/opt/uploader
+EnvironmentFile=/opt/uploader/.env
+ExecStart=/opt/uploader/.venv/bin/python -m uploader.main
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/uploader/downloads /opt/uploader/logs /opt/uploader/data
+
+[Install]
+WantedBy=multi-user.target

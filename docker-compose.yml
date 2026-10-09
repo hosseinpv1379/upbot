@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  uploader:
+    build: .
+    container_name: tg-uploader
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./downloads:/app/downloads
+      - ./logs:/app/logs
+      - ./data:/app/data
+    stop_grace_period: 30s
